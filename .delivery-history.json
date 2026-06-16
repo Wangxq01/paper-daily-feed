@@ -1052,6 +1052,22 @@
     {
       "fingerprint": "011c6540f551668d61465760e964e9d691171866b086a6fdd77a853906229f87",
       "deliveredAt": "2026-06-15T23:59:58.034Z"
+    },
+    {
+      "fingerprint": "384c4931ce86369fb64e399e7ff529db7be3d745b89b1afe0bf2e95c137c4e21",
+      "deliveredAt": "2026-06-16T23:46:14.252Z"
+    },
+    {
+      "fingerprint": "284c1d6cff464b163767c52431e78d01be6ab44b0b5737051039819770c6f623",
+      "deliveredAt": "2026-06-16T23:46:14.252Z"
+    },
+    {
+      "fingerprint": "db4922f103db3d13f8c142cb0063d3091a3db9d61f1df287cd52c152e1fba757",
+      "deliveredAt": "2026-06-16T23:46:14.252Z"
+    },
+    {
+      "fingerprint": "e6ddfdd0a209370b6ebbc0ffd706c0b215d6198fb87911e9d86b35b807875ca0",
+      "deliveredAt": "2026-06-16T23:46:14.252Z"
     }
   ]
 }
