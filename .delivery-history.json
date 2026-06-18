@@ -1108,6 +1108,18 @@
     {
       "fingerprint": "db891262dbdf3e8e43f888973dd1e161a1a298a3c3afcb6738f0853f6cd2b7c8",
       "deliveredAt": "2026-06-17T23:49:34.894Z"
+    },
+    {
+      "fingerprint": "47e75ee3bf7acd74c06a9628e6bb0344030a1adf1b0c30573a613275cec8babf",
+      "deliveredAt": "2026-06-18T23:59:05.694Z"
+    },
+    {
+      "fingerprint": "6bd129d967d3e74cf83efe8a2944535419f3c5c97277628b6d6b3e9bb47e2a17",
+      "deliveredAt": "2026-06-18T23:59:05.694Z"
+    },
+    {
+      "fingerprint": "98734f0aa915383aade28617e7159466d2f9b7e1543473066a2819202f0f956f",
+      "deliveredAt": "2026-06-18T23:59:05.694Z"
     }
   ]
 }
