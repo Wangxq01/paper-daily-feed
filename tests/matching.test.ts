@@ -9,6 +9,7 @@ import {
 import type { MatchingConfig } from "../src/app-config.js";
 import type { FeedSource, InterestDocument, MatchContext, RecommendedPaper } from "../src/types.js";
 import { stubFetch } from "./test-support.js";
+import { buildProfileInterestDocuments } from "../src/interest-profile.js";
 
 const pipelineMock = mock();
 const transformersEnvMock = {
@@ -96,6 +97,91 @@ describe("neutral matching domain types", () => {
 });
 
 describe("rankPapers", () => {
+  const profileWithJournals = (favoriteJournals: string[]) => buildProfileInterestDocuments({
+    enabled: true,
+    summary: "Urban transport",
+    topics: [],
+    methods: [],
+    favoriteJournals,
+    avoidTopics: [],
+    referencePapers: []
+  });
+
+  it("boosts normalized full journal matches without embedding venues or changing match context", async () => {
+    const papers = [
+      { ...candidate("Other venue", "Transit access."), journal: "Nature" },
+      { ...candidate("Preferred venue", "Transit access."), journal: "Nature Cities" },
+      { ...candidate("Related venue name", "Transit access."), journal: "Nature Cities Research" }
+    ];
+    const embedTexts: EmbedTexts = mock(async (texts: string[]) => texts.map((_, index) => index < 3 ? [0.6, 0.8] : [1, 0]));
+    const ranked = await rankPapers(
+      matchingConfig, papers, profileWithJournals(["  ＮＡＴＵＲＥ—  Cities ", "nature cities"]), {}, embedTexts
+    );
+
+    expect(embedTexts).toHaveBeenCalledWith([
+      "Other venue\n\nTransit access.",
+      "Preferred venue\n\nTransit access.",
+      "Related venue name\n\nTransit access.",
+      "Interest summary\n\nSummary: Urban transport"
+    ]);
+    expect(ranked.map((paper) => paper.title)).toEqual(["Preferred venue", "Other venue", "Related venue name"]);
+    expect(ranked[0]!.score).toBeCloseTo(0.65);
+    expect(ranked[1]!.score).toBeCloseTo(0.6);
+    expect(ranked[2]!.score).toBeCloseTo(0.6);
+    expect(ranked[0]!.matchContext?.bestMatchTitle).toBe("Interest summary");
+    expect(ranked[0]!.interestCluster?.labels).toEqual(["Urban transport"]);
+  });
+
+  it("does not let a favorite journal rescue weak or avoided papers below minScore", async () => {
+    const interests = profileWithJournals(["Nature"]);
+    interests.push({ ...interest("Avoid", "Avoided topic", []), polarity: "negative" });
+    const ranked = await rankPapers(
+      { ...matchingConfig, minScore: 0.5, avoidPenaltyWeight: 0.2 },
+      [
+        { ...candidate("Weak", "Weak topic overlap."), journal: "Nature" },
+        { ...candidate("Avoided", "Topic overlap but avoided."), journal: "Nature" },
+        { ...candidate("Relevant", "Useful topic overlap."), journal: "Nature" }
+      ],
+      interests, {}, async () => [
+        [0.48, 0, Math.sqrt(1 - 0.48 ** 2)],
+        [0.6, 0.6, Math.sqrt(0.28)],
+        [0.6, 0, 0.8],
+        [1, 0, 0],
+        [0, 1, 0]
+      ]
+    );
+    expect(ranked.map((paper) => paper.title)).toEqual(["Relevant"]);
+    expect(ranked[0]!.score).toBeCloseTo(0.65);
+  });
+
+  it("requires a positive semantic interest even when favorite journals are configured", async () => {
+    const embedTexts: EmbedTexts = mock(async () => []);
+    const venues = profileWithJournals(["Nature"]).filter((document) => document.kind === "favorite-journal");
+    for (const interests of [venues, [...venues, { ...interest("Avoid", "Avoided topic", []), polarity: "negative" as const }]]) {
+      expect(await rankPapers(
+        matchingConfig, [{ ...candidate("Nature paper", "Some topic."), journal: "Nature" }],
+        interests, {}, embedTexts
+      )).toEqual([]);
+    }
+    expect(embedTexts).not.toHaveBeenCalled();
+  });
+
+  it("caps the venue bonus and does not boost zero relevance or empty journal names", async () => {
+    const ranked = await rankPapers(
+      { ...matchingConfig, minScore: 0 },
+      [
+        { ...candidate("Strong", "Relevant."), journal: "Nature" },
+        { ...candidate("Unrelated", "Unrelated."), journal: "Nature" },
+        { ...candidate("No venue", "Relevant."), journal: "" }
+      ],
+      profileWithJournals(["Nature", " ", "---"]), {},
+      async () => [[0.98, Math.sqrt(1 - 0.98 ** 2)], [0, 1], [0.6, 0.8], [1, 0]]
+    );
+    expect(ranked.map((paper) => [paper.title, paper.score])).toEqual([
+      ["Strong", 1], ["No venue", 0.6], ["Unrelated", 0]
+    ]);
+  });
+
   it("returns score and match context from the best matching interest document", async () => {
     const papers = [
       candidate("Transit access", "Public transit accessibility and equity."),

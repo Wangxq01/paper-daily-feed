@@ -68,6 +68,12 @@ function interestText(interest: InterestDocument): string {
   return `${interest.title}\n\n${interest.text}`;
 }
 
+function normalizedJournalName(name: string): string {
+  return name.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+const FAVORITE_JOURNAL_BONUS = 0.05;
+
 function dedupeCandidates(candidates: FeedPaper[]): FeedPaper[] {
   const seen = new Set<string>();
   const unique: FeedPaper[] = [];
@@ -138,9 +144,6 @@ function interestWeight(interest: InterestDocument): number {
   }
   if (interest.source === "reference-paper") {
     return 0.9;
-  }
-  if (interest.kind === "favorite-journal") {
-    return 0.6;
   }
   if (interest.kind === "summary") {
     return 1;
@@ -309,20 +312,28 @@ export async function rankPapers(
   embedTextsMock?: EmbedTexts
 ): Promise<RecommendedPaper[]> {
   const uniqueCandidates = dedupeCandidates(candidates);
-  if (uniqueCandidates.length === 0 || interests.length === 0) {
+  // Venue preferences are metadata, never semantic topics or cluster members.
+  const semanticInterests = interests.filter((interest) => interest.kind !== "favorite-journal");
+  const favoriteJournals = new Set(
+    interests
+      .filter((interest) => interest.kind === "favorite-journal" && interest.polarity !== "negative")
+      .map((interest) => normalizedJournalName(interest.label?.trim() || interest.title))
+      .filter(Boolean)
+  );
+  if (uniqueCandidates.length === 0 || !semanticInterests.some((interest) => interest.polarity !== "negative")) {
     return [];
   }
 
   const embedTexts = embedTextsMock ?? (await createEmbedder(config));
   const candidateTexts = uniqueCandidates.map((candidate) => paperText(candidate));
-  const interestTexts = interests.map((interest) => interestText(interest));
+  const interestTexts = semanticInterests.map((interest) => interestText(interest));
   const embeddings = await embedTexts([...candidateTexts, ...interestTexts]);
   const candidateEmbeddings = embeddings.slice(0, uniqueCandidates.length);
   const interestEmbeddings = embeddings.slice(uniqueCandidates.length);
-  const positiveInterests = interests.filter((interest) => interest.polarity !== "negative");
-  const negativeInterests = interests.filter((interest) => interest.polarity === "negative");
-  const positiveEmbeddings = interestEmbeddings.filter((_, index) => interests[index]?.polarity !== "negative");
-  const negativeEmbeddings = interestEmbeddings.filter((_, index) => interests[index]?.polarity === "negative");
+  const positiveInterests = semanticInterests.filter((interest) => interest.polarity !== "negative");
+  const negativeInterests = semanticInterests.filter((interest) => interest.polarity === "negative");
+  const positiveEmbeddings = interestEmbeddings.filter((_, index) => semanticInterests[index]?.polarity !== "negative");
+  const negativeEmbeddings = interestEmbeddings.filter((_, index) => semanticInterests[index]?.polarity === "negative");
   const positiveClusters = buildInterestClusters(positiveInterests, positiveEmbeddings, config.clusterSimilarityThreshold);
   const negativeClusters = buildInterestClusters(negativeInterests, negativeEmbeddings, config.clusterSimilarityThreshold);
   console.log(
@@ -359,8 +370,18 @@ export async function rankPapers(
         clusterId: bestPositive?.cluster.id ?? -1
       };
     })
-    .sort((left, right) => right.score - left.score)
-    .filter((paper) => paper.score >= config.minScore);
+    // A venue preference cannot rescue a paper below the relevance threshold,
+    // including papers down-ranked by avoidTopics.
+    .filter((paper) => paper.score >= config.minScore)
+    .map((paper) => ({
+      ...paper,
+      score: clampScore(paper.score + (
+        paper.score > 0 && favoriteJournals.has(normalizedJournalName(paper.journal))
+          ? FAVORITE_JOURNAL_BONUS
+          : 0
+      ))
+    }))
+    .sort((left, right) => right.score - left.score);
 
   return selectHybridClusterDiverse(scored, config.paperLimit);
 }

@@ -33,6 +33,7 @@ export type InterestDocument = {
   title: string;
   text: string;
   topics: string[];
+  /** favorite-journal carries a structured venue preference and is never embedded. */
   kind?: InterestKind;
   label?: string;
   polarity?: InterestPolarity;
