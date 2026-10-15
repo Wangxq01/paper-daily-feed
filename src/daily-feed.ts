@@ -77,18 +77,23 @@ export async function runDailyFeed(
     `Filtered ${recentPapers.length - eligiblePapers.length} already delivered papers; ${eligiblePapers.length} candidates remain.`
   );
   const enrichedPapers = await dependencies.enrichFeedPaperMetadata(eligiblePapers, config.metadataEnrichment);
+  // History records the delivered metadata, whose title can differ from the RSS title.
+  const undeliveredEnrichedPapers = deliveryHistory.filterUndeliveredPapers(enrichedPapers);
+  console.log(`Filtered ${enrichedPapers.length - undeliveredEnrichedPapers.length} already delivered papers after metadata enrichment.`);
   const matchingProvider = dependencies.resolveMatchingProvider(config.matching);
   const fallback = matchingProvider.fallbackReason ? ` (${matchingProvider.fallbackReason})` : "";
   console.log(
-    `Ranking ${enrichedPapers.length} papers against ${interestCorpus.length} interest documents with ${matchingProvider.label}${fallback}...`
+    `Ranking ${undeliveredEnrichedPapers.length} papers against ${interestCorpus.length} interest documents with ${matchingProvider.label}${fallback}...`
   );
-  let recommendations = await dependencies.rankPapers(config.matching, enrichedPapers, interestCorpus, env);
+  let recommendations = await dependencies.rankPapers(config.matching, undeliveredEnrichedPapers, interestCorpus, env);
   console.log(`Ranked ${recommendations.length} recommended papers.`);
   recommendations = await dependencies.enrichRecommendationAbstracts(
     recommendations,
     config.metadataEnrichment
   );
   recommendations = await dependencies.repairRecommendationMetadata(recommendations, config.metadataRepair);
+  const finalRecommendations = deliveryHistory.filterUndeliveredPapers(recommendations);
+  console.log(`Filtered ${recommendations.length - finalRecommendations.length} already delivered papers after selected metadata enrichment.`);
 
-  return deliverRecommendations(recommendations, mode, config, deliveryHistory, env, new Date(), dependencies.delivery);
+  return deliverRecommendations(finalRecommendations, mode, config, deliveryHistory, env, new Date(), dependencies.delivery);
 }

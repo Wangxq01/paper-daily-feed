@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AppConfig } from "../src/app-config.js";
+import { openDeliveryHistory } from "../src/delivery-history.js";
+import { fetchCrossrefWork } from "../src/crossref.js";
+import { enrichFeedPaperMetadata, enrichRecommendationAbstracts } from "../src/paper-metadata.js";
+import { normalizeFeedItem } from "../src/rss.js";
 import { runDailyFeed, type DailyFeedDependencies } from "../src/daily-feed.js";
 import type { FeedPaper, InterestDocument, RecommendedPaper } from "../src/types.js";
 
@@ -156,7 +163,9 @@ const interest: InterestDocument = {
 describe("runDailyFeed delivery history", () => {
   beforeEach(() => {
     mock.clearAllMocks();
-    historySessionMock.filterUndeliveredPapers.mockImplementation((papers: FeedPaper[]) => papers.slice(1));
+    historySessionMock.filterUndeliveredPapers.mockImplementation((papers: FeedPaper[]) =>
+      papers.filter((paper) => paper.title !== "Delivered")
+    );
     corpusMock.buildInterestCorpus.mockResolvedValue([interest]);
     feedMock.fetchRecentFeedPapers.mockResolvedValue([paper("Delivered"), paper("Fresh")]);
     metadataEnrichmentMock.enrichFeedPaperMetadata.mockImplementation(async (papers) =>
@@ -212,7 +221,7 @@ describe("runDailyFeed delivery history", () => {
     await runDailyFeed("preview-email", {}, config(), dependencies);
     await runDailyFeed("run", {}, config({ runtime: { debug: true, sendEmpty: false } }), dependencies);
 
-    expect(historySessionMock.filterUndeliveredPapers).toHaveBeenCalledTimes(2);
+    expect(historySessionMock.filterUndeliveredPapers).toHaveBeenCalledTimes(6);
     expect(historySessionMock.confirmSuccessfulDelivery).not.toHaveBeenCalled();
   });
 
@@ -223,6 +232,41 @@ describe("runDailyFeed delivery history", () => {
 
     expect(historySessionMock.confirmSuccessfulDelivery).not.toHaveBeenCalled();
   });
+
+  for (const enrichmentStage of ["feed", "selected"] as const) {
+    it(`does not resend a paper whose title changed during ${enrichmentStage} enrichment`, async () => {
+      const directory = mkdtempSync(join(tmpdir(), "feed-repeat-"));
+      try {
+        const doi = "10.1080/02723638.2026.2706843";
+        const rawTitle = "Re-reading\n <i>Hustle Urbanism</i>\n with others";
+        const rss = normalizeFeedItem("Urban Geography", {
+          title: rawTitle,
+          link: `https://www.tandfonline.com/doi/full/${doi}`
+        })!;
+        const fetchCrossref = async () => fetchCrossrefWork(doi, {
+          fetcher: async () => Response.json({ message: { DOI: doi, title: [rawTitle] } })
+        });
+        const localDependencies: DailyFeedDependencies = {
+          ...dependencies,
+          openDeliveryHistory: () => openDeliveryHistory({ path: join(directory, "history.json"), env: {} }),
+          fetchRecentFeedPapers: async () => [rss],
+          enrichFeedPaperMetadata: enrichmentStage === "feed"
+            ? (papers, settings) => enrichFeedPaperMetadata(papers, settings, { fetchCrossref })
+            : async (papers) => papers,
+          rankPapers: async (_settings, papers) => papers.map((paper) => ({ ...paper, score: 0.8, matchContext: null })),
+          enrichRecommendationAbstracts: (papers, settings) => enrichRecommendationAbstracts(papers, settings, { fetchCrossref })
+        };
+
+        expect((await runDailyFeed("run", {}, config(), localDependencies)).sent).toBe(true);
+        const nextDay = await runDailyFeed("run", {}, config(), localDependencies);
+        expect(nextDay.recommendationCount).toBe(0);
+        expect(nextDay.sent).toBe(false);
+        expect(emailMock.sendEmail).toHaveBeenCalledTimes(1);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("reports possible delivery when Delivery History persistence fails after SMTP success", async () => {
     historySessionMock.confirmSuccessfulDelivery.mockImplementation(() => {
